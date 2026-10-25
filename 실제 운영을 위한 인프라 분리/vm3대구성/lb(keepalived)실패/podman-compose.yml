@@ -1,0 +1,61 @@
+version: '3.8'
+
+networks:
+  lb-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.89.100.0/24
+
+services:
+  lb-node1:
+    image: docker.io/osixia/keepalived:2.4.3
+    container_name: lb-node1
+    hostname: lb-node1
+    restart: always
+    cap_add:
+      - NET_ADMIN      # 네트워크 인터페이스 조작 및 VIP 바인딩을 위한 필수 권한
+      - NET_BROADCAST  # VRRP 하트비트 브로드캐스트 통신 권한
+      - NET_RAW        # 로우 패킷(Raw Packet) 제어 권한
+    networks:
+      lb-net:
+        ipv4_address: 10.89.100.11
+    #ports:
+    #  - "5432:5432"   # PostgreSQL L4 진입점
+    #  - "8080:8080"   # Keycloak L7 진입점
+    #  - "7000:7000"   # HAProxy Stats 페이지
+    volumes:
+      - ./keepalived-node1.conf:/etc/keepalived/keepalived.conf:ro
+      - ./haproxy.cfg:/etc/haproxy/haproxy.cfg:ro
+  
+  lb-node2:
+    image: docker.io/osixia/keepalived:2.4.3
+    container_name: lb-node2
+    hostname: lb-node2
+    restart: always
+    cap_add:
+      - NET_ADMIN      # 네트워크 인터페이스 조작 및 VIP 바인딩을 위한 필수 권한
+      - NET_BROADCAST  # VRRP 하트비트 브로드캐스트 통신 권한
+      - NET_RAW        # 로우 패킷(Raw Packet) 제어 권한
+    networks:
+      lb-net:
+        ipv4_address: 10.89.100.12
+    volumes:
+      - ./keepalived-node2.conf:/etc/keepalived/keepalived.conf:ro
+      - ./haproxy.cfg:/etc/haproxy/haproxy.cfg:ro
+
+  lb-node3:
+    image: docker.io/osixia/keepalived:2.4.3
+    container_name: lb-node3
+    hostname: lb-node3
+    restart: always
+    cap_add:
+      - NET_ADMIN      # 네트워크 인터페이스 조작 및 VIP 바인딩을 위한 필수 권한
+      - NET_BROADCAST  # VRRP 하트비트 브로드캐스트 통신 권한
+      - NET_RAW        # 로우 패킷(Raw Packet) 제어 권한
+    networks:
+      lb-net:
+        ipv4_address: 10.89.100.13
+    volumes:
+      - ./keepalived-node3.conf:/etc/keepalived/keepalived.conf:ro
+      - ./haproxy.cfg:/etc/haproxy/haproxy.cfg:ro

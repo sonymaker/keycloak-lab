@@ -1,0 +1,63 @@
+version: '3.8'
+
+name: enterprise-db-node2  # Node 2 전용 프로젝트 이름
+
+networks:
+  net-enterprise-db-node2:
+    driver: bridge          # Node 1과 완전히 분리된 Node 2 전용 브리지 네트워크
+
+volumes:
+  etcd_data_node2:
+  pg_data_node2:
+
+services:
+  # ==========================================
+  # 1. etcd 서비스 (Node 2)
+  # ==========================================
+  etcd:
+    image: quay.io/coreos/etcd:v3.7.3
+    container_name: etcd-node-2
+    restart: always
+    networks:
+      - net-enterprise-db-node2
+    environment:
+      ETCD_NAME: "etcd-2"
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: "http://192.168.0.130:2382" # Node 2 피어 통신 주소
+      ETCD_LISTEN_PEER_URLS: "http://0.0.0.0:2382"
+      ETCD_LISTEN_CLIENT_URLS: "http://0.0.0.0:2379"
+      ETCD_ADVERTISE_CLIENT_URLS: "http://192.168.0.130:2381"      # 호스트 포트 2381과 매핑
+      ETCD_INITIAL_CLUSTER: "etcd-1=http://192.168.0.130:2380,etcd-2=http://192.168.0.130:2382,etcd-3=http://192.168.0.130:2384"
+      ETCD_INITIAL_CLUSTER_STATE: "new"                      # 신규 클러스터 생성 모드
+      #ETCD_INITIAL_CLUSTER_STATE: "existing"                  # 장애 복구를 위해 이미 운영중인 etcd 클러스터에 다시 추가할 때만 "existing"로 설정
+    ports:
+      - "2381:2379"  # etcd 클라이언트 호스트 포트 (Node 2 전용으로 2381 분리)
+      - "2382:2382"  # etcd 피어 호스트 포트 (Node 2 전용으로 2382 분리)
+    volumes:
+      - etcd_data_node2:/default.etcd  # 👈 공식 etcd 이미지 표준 데이터 경로로 수정
+
+  # ==========================================
+  # 2. Patroni + PostgreSQL 서비스 (Node 2)
+  # ==========================================
+  patroni-postgres:
+    image: sonymaker/patroni-postgres:17.11-alpine3.23  # Patroni가 포함된 표준 PostgreSQL 커스텀 빌드 이미지
+    container_name: patroni-postgres-node-2
+    restart: always
+    networks:
+      - net-enterprise-db-node2
+    environment:
+      POSTGRES_PASSWORD: enterprise_secure_password
+      PATRONI_SCOPE: enterprise-ha-cluster
+      PATRONI_NAME: pg-node-2                                # Node 2 식별 이름
+      PATRONI_RESTAPI_LISTEN: 0.0.0.0:8008
+      PATRONI_RESTAPI_CONNECT_ADDRESS: "192.168.0.130:8009"  # Node 2 API 호스트 포트 (8009 분리)
+      PATRONI_ETCD3_HOSTS: "192.168.0.130:2379,192.168.0.130:2381,192.168.0.130:2383"
+      PATRONI_POSTGRESQL_LISTEN: 0.0.0.0:5432
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: "192.168.0.130:5434" # 타 노드가 복제(`pg_basebackup`) 시 접속할 Node 2의 호스트 포트 (5434 분리)
+    ports:
+      - "5434:5432"  # PostgreSQL 호스트 포트 (Node 2 전용 5434 매핑)
+      - "8009:8008"  # Patroni API 호스트 포트 (Node 2 전용 8009 매핑)
+    volumes:
+      - pg_data_node2:/var/lib/postgresql/data
+      - ./patroni.yml:/etc/patroni/patroni.yml:z
+    depends_on:
+      - etcd

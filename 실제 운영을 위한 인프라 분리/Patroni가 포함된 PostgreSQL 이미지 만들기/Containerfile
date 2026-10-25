@@ -1,0 +1,32 @@
+FROM docker.io/library/postgres:17.11-alpine3.23
+
+# 1. 시스템 패키지 및 권한 변경용 도구(su-exec) 설치
+RUN apk update && apk add --no-cache \
+    python3 \
+    py3-pip \
+    py3-psycopg2 \
+    python3-dev \
+    gcc \
+    musl-dev \
+    libffi-dev \
+    yaml-dev \
+    su-exec
+
+# 2. Patroni 및 etcd3 연동 클라이언트 설치
+RUN pip3 install --no-cache-dir patroni[etcd3] --break-system-packages
+
+# 3. 디렉토리 구조 생성 및 기본 권한 설정
+RUN mkdir -p /etc/patroni /var/lib/postgresql/data && \
+    chown -R postgres:postgres /etc/patroni /var/lib/postgresql/data && \
+    chmod 700 /var/lib/postgresql/data
+
+# 4. 엔트리포인트로 사용할 래퍼 스크립트 작성
+# (컨테이너가 뜰 때마다 루트 권한으로 디렉토리 권한을 700 및 postgres 소유로 수정 후 postgres로 전환)
+RUN printf '#!/bin/sh\n\
+chown -R postgres:postgres /var/lib/postgresql/data\n\
+chmod 700 /var/lib/postgresql/data\n\
+exec su-exec postgres patroni /etc/patroni/patroni.yml\n' > /usr/local/bin/docker-entrypoint.sh && \
+    chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# 5. 엔트리포인트 지정 (USER postgres로 고정하지 않고 엔트리포인트 내부에서 su-exec 처리)
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

@@ -1,0 +1,36 @@
+version: '3.8'
+
+networks:
+  net-keycloak2:
+    driver: bridge
+
+services:
+  # Keycloak 노드 2
+  keycloak-2:
+    image: quay.io/keycloak/keycloak:26.8.1
+    container_name: keycloak-2
+    environment:
+      KC_DB: postgres
+      #KC_DB_URL: jdbc:postgresql://192.168.0.130:5431,192.168.0.130:5432,192.168.0.130:5433/keycloak?targetServerType=master&loadBalanceHosts=true
+      KC_DB_URL: jdbc:postgresql://192.168.0.130:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak_password
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"       # 호스트 이름 엄격 검사 해제
+      KC_HOSTNAME: "localhost"          # 외부에서 접근하는 주소 명시
+      KC_HOSTNAME_PORT: "8080"          # 외부에서 접근하는 포트 명시
+      KC_PROXY_HEADERS: "xforwarded"    # 프록시가 보내주는 헤더(X-Forwarded-For 등)를 신뢰하도록 설정
+      JAVA_OPTS: "-Xms512m -Xmx1024m"   # JVM 메모리 상한선 제한 (OOM 방지)
+
+      # 🚀 [추가] Infinispan 클러스터링 및 JGroups 통신 설정 (세션 공유 필수)
+      KC_CACHE: ispn
+      JGROUPS_DISCOVERY_PROTOCOL: jdbc.JDBC_PING
+      KC_SPI_CONNECTION_PROVIDER_ENABLED: "true"
+    ports:
+      - "8082:8080"  # Keycloak 노드 2의 포트를 호스트의 8082로 매핑
+      - "7802:7800"  # 노드 간 세션 동기화(JGroups) 포트
+    command: ["start"]
+    networks:
+      - net-keycloak2

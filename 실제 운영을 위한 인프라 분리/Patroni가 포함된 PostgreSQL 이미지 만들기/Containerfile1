@@ -1,0 +1,27 @@
+FROM docker.io/library/postgres:17.11-alpine3.23
+
+# 1. 필수 시스템 패키지 및 Python 런타임/빌드 의존성 설치
+RUN apk update && apk add --no-cache \
+    python3 \
+    py3-pip \
+    py3-psycopg2 \
+    python3-dev \
+    gcc \
+    musl-dev \
+    libffi-dev \
+    yaml-dev
+
+# 2. Patroni 및 etcd3 연동 클라이언트 설치
+RUN pip3 install --no-cache-dir patroni[etcd3] --break-system-packages
+
+# 3. Patroni 설정 파일 디렉토리 생성 및 권한 설정
+RUN mkdir -p /etc/patroni && chown -R postgres:postgres /etc/patroni
+
+# 4. PostgreSQL 데이터 디렉토리 권한 확보
+RUN mkdir -p /var/lib/postgresql/data && chown -R postgres:postgres /var/lib/postgresql/data
+
+# 5. 실행 주체를 postgres 사용자로 변경 (보안 및 권한 표준)
+USER postgres
+
+# 컨테이너 기본 실행 명령어를 Patroni 구동으로 지정
+ENTRYPOINT ["patroni", "/etc/patroni/patroni.yml"]

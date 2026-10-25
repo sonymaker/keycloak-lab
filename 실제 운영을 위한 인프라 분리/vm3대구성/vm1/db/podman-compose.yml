@@ -1,0 +1,66 @@
+version: '3.8'
+
+# 단일 물리 호스트에서 여러 노드를 완전히 격리하기 위한 프로젝트 고유 이름
+name: enterprise-db-node1  
+
+networks:
+  net-enterprise-db-node1:
+    driver: bridge          # 타 노드와 간섭하지 않는 Node 1 전용 독자적 브리지 네트워크
+
+volumes:
+  etcd_data_node1:          # etcd 분산 합의 데이터 영구 보존용 Named Volume
+  pg_data_node1:            # PostgreSQL 데이터 디렉토리 영구 보존용 Named Volume
+
+services:
+  # ==========================================
+  # 1. etcd 서비스 (Node 1)
+  # ==========================================
+  etcd:
+    image: quay.io/coreos/etcd:v3.7.3
+    container_name: etcd-node-1
+    restart: always
+    networks:
+      - net-enterprise-db-node1
+    environment:
+      ETCD_NAME: "etcd-1"                                    # etcd 클러스터 내에서 식별되는 노드 이름
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: "http://192.168.0.130:2380" # 피어 통신용 광고 주소
+      ETCD_LISTEN_PEER_URLS: "http://0.0.0.0:2380"           # 피어 통신을 수신할 내부 바인드 주소
+      ETCD_LISTEN_CLIENT_URLS: "http://0.0.0.0:2379"         # 클라이언트 통신을 수신할 내부 바인드 주소
+      ETCD_ADVERTISE_CLIENT_URLS: "http://192.168.0.130:2379" # 클라이언트 접속용 광고 주소
+      # 3개 노드의 etcd 초기 멤버 구성 정의 (IP와 포트 매핑)
+      ETCD_INITIAL_CLUSTER: "etcd-1=http://192.168.0.130:2380,etcd-2=http://192.168.0.130:2382,etcd-3=http://192.168.0.130:2384"
+      ETCD_INITIAL_CLUSTER_STATE: "new"                      # 신규 클러스터 생성 모드
+      #ETCD_INITIAL_CLUSTER_STATE: "existing"                  # 장애 복구를 위해 이미 운영중인 etcd 클러스터에 다시 추가할 때만 "existing"로 설정
+    ports:
+      - "2379:2379"  # etcd 클라이언트 통신을 위한 호스트 포트 노출
+      - "2380:2380"  # etcd 노드 간 피어 통신을 위한 호스트 포트 노출
+    volumes:
+      - etcd_data_node1:/default.etcd  # 👈 공식 etcd 이미지 표준 데이터 경로로 수정
+
+  # ==========================================
+  # 2. Patroni + PostgreSQL 서비스 (Node 1)
+  # ==========================================
+  patroni-postgres:
+    image: sonymaker/patroni-postgres:17.11-alpine3.23  # Patroni가 포함된 표준 PostgreSQL 커스텀 빌드 이미지
+    container_name: patroni-postgres-node-1
+    restart: always
+    networks:
+      - net-enterprise-db-node1
+    environment:
+      POSTGRES_PASSWORD: enterprise_secure_password          # PostgreSQL 슈퍼유저(postgres) 초기 패스워드
+      PATRONI_SCOPE: enterprise-ha-cluster                   # HA 클러스터를 식별하는 고유 스코프 명칭
+      PATRONI_NAME: pg-node-1                                # 클러스터 내 현재 PostgreSQL 노드 이름
+      PATRONI_RESTAPI_LISTEN: 0.0.0.0:8008                   # Patroni REST API 내부 수신 주소
+      PATRONI_RESTAPI_CONNECT_ADDRESS: "192.168.0.130:8008"  # 타 노드가 접근할 Patroni API 호스트 연계 주소 (Node 1 고유 포트)
+      # etcd 클러스터 전체 엔드포인트 목록 (노드별로 호스트 매핑된 포트 지정)
+      PATRONI_ETCD3_HOSTS: "192.168.0.130:2379,192.168.0.130:2382,192.168.0.130:2384"
+      PATRONI_POSTGRESQL_LISTEN: 0.0.0.0:5432                # PostgreSQL 내부 수신 포트
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: "192.168.0.130:5433" # 타 노드가 복제(`pg_basebackup`) 시 접속할 Node 1의 호스트 포트 (5433 분리)
+    ports:
+      - "5433:5432"  # PostgreSQL DB 서비스 호스트 포트 (Node 1 전용 5433 매핑)
+      - "8008:8008"  # Patroni REST API 호스트 포트 (Node 1 전용 8008 매핑)
+    volumes:
+      - pg_data_node1:/var/lib/postgresql/data  # DB 데이터 영구 저장 볼륨
+      - ./patroni.yml:/etc/patroni/patroni.yml:z # 설정 파일 마운트 (SELinux 대응 :z 옵션 포함)
+    depends_on:
+      - etcd

@@ -1,0 +1,157 @@
+== postgreSQL 운영을 위한 VM서버에 사전 설치되어야 패키지들 ==
+- podman-compose
+- postgresql-client
+- etcdctl
+
+== podman 컨테이너 로그 확인 ==
+podman logs -f patroni-postgres-node-1
+podman logs patroni-postgres-node-1 --tail 100
+podman logs patroni-postgres-node-2 --tail 100
+podman logs patroni-postgres-node-3 --tail 100
+
+== podman의 named volume 접근, 삭제, 세부정보확인, 사용법 ==
+podman volume ls
+podman volume rm 볼륨명
+podman volume rm -f 볼륨명
+podman volume inspect <볼륨이름>
+
+== 알파인(Alpine) 컨테이너를 이용한 임시 마운트 방식을 사용하여 Podman Named Volume에 접근방법 ==
+podman run --rm -it -v <볼륨이름>:/mnt docker.io/library/alpine sh
+
+== Podman Named Volume의 내용을 호스트로 빼내는 방법 ==
+# 1. 알파인 컨테이너를 띄워 볼륨 내부 데이터를 tar.gz로 압축하여 호스트 현재 경로에 백업
+podman run --rm -it -v <볼륨이름>:/mnt -v $(pwd):/backup docker.io/library/alpine tar -czvf /backup/pg_volume_backup.tar.gz -C /mnt .
+
+== tar.gz로 압축된 볼륨 내부 데이터를 다시 네임드 볼륨에 집어넣는 방법 ==
+# 빈 볼륨에 백업 파일을 다시 풀어넣기
+podman run --rm -it -v <볼륨이름>:/mnt -v $(pwd):/backup docker.io/library/alpine sh -c "rm -rf /mnt/* && tar -xzvf /backup/pg_volume_backup.tar.gz -C /mnt"
+
+== Patroni 환경에서 가장 안전한 백업 및 복원 원칙 ==
+: Patroni HA 환경에서는 수동으로 데이터 파일을 통째로 백업/복원하는 것보다 아래의 정석적인 방법을 권장합니다.
+1. 스키마 및 데이터 복원 (pg_dump 활용)
+:pg_dump를 통해 SQL 덤프 파일(backup.sql)을 확보하고, 정상 기동된 Patroni 클러스터에 psql로 밀어 넣는 방식이 데이터 호환성 측면에서 가장 안전합니다.
+
+2. 불가피하게 파일 시스템 전체를 백업해야 하는 경우 (pg_basebackup 또는 tar):
+: 컨테이너가 완전히 정지된 상태(down)에서 볼륨(또는 바인드 마운트된 디렉토리) 전체를 tar로 묶어 백업합니다.
+: 복원 시 주의사항: 파일을 집어넣은 뒤, 반드시 디렉토리 권한을 확인해야 합니다 (컨테이너 내부의 postgres 사용자가 읽고 쓸 수 있는 권한이어야 함). 또한 etcd에 남아있는 이전 클러스터 락 정보와 충돌할 수 있으므로, 초기 기동 시 Patroni 설정 및 etcd 상태를 함께 점검해야 합니다.
+
+
+==  Patroni 환경에서 HA 구성 장애 복구 방법(죽었던 1대를 복구하는 법: 1대가 완전히 아작났다고 가정했을때) ==
+3대 중 1대가 죽었을때는 정상 복구 가능: 죽었던 1대를 다시 기동하면 알아서 데이터 복구가 됨
+3대 중 2대가 죽으면 클러스터 복구 불가: 이때는 데이터만 백업해뒀다가 새로 띄워서 복구해야 할 듯
+
+# 1. Mac 호스트에 etcdctl 설치
+brew install etcd
+
+# 2. 클러스터 멤버 확인
+ETCDCTL_API=3 etcdctl --endpoints=http://127.0.0.1:2379 member list
+
+# 3. 장애가 발생하여 정지중인 노드의 ID(16진수)를 확인한 뒤 제거
+ETCDCTL_API=3 etcdctl --endpoints=http://127.0.0.1:2379 member remove <MEMBER_ID>
+
+# 4. 살아있는 etcd 엔드포인트에 접속하여 복구할 노드의 Peer URL(통신용)을 추가
+ETCDCTL_API=3 etcdctl --endpoints=http://127.0.0.1:2379 member add etcd-2 --peer-urls=http://192.168.0.130:2382
+
+# 5. 복구할 노드의 환경변수 ETCD_INITIAL_CLUSTER_STATE 항목을 "existing"으로 설정
+podman-compose.yml파일에 정의한 ETCD_INITIAL_CLUSTER_STATE 항목을 "existing"으로 설정(: 3대 모두 다시 생성할 때만 "new"로 설정)
+
+# 6. 컨테이너 생성 및 기동. 복구 확인
+
+
+
+== etcd 클러스터 상태 확인 ==
+podman exec -it etcd-node-1 etcdctl member list --write-out=table
+
+== Patroni 내장 클러스터 상태 조회 ==
+curl -s http://localhost:8008/cluster | json_pp 2>/dev/null || curl -s http://localhost:8008/cluster
+
+== 현재 Primary(쓰기 가능 노드) 직조회 ==
+#3개 포트중에 role이 primary인게 현재 leader임: leader만 write가 가능하고 나머지 노드들은 readonly만 가능
+curl -s http://localhost:8008/primary
+curl -s http://localhost:8009/primary
+curl -s http://localhost:8010/primary
+
+== postgresql-client 패키지 설치 ==
+#Alpine Linux 기반 컨테이너 내부인 경우 (가장 유력)
+apk update && apk add --no-cache postgresql-client
+#Ubuntu / Debian 계열 호스트 OS인 경우
+sudo apt update && sudo apt install -y postgresql-client
+#RHEL / Rocky Linux / CentOS 계열 호스트 OS인 경우
+sudo dnf install -y postgresql
+#Apple PostgreSQL 클라이언트 라이브러리(libpq)를 설치
+brew install libpq
+echo 'export PATH="/opt/homebrew/opt/libpq/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+
+== PostgreSQL 직접 접속을 통한 복제 검증 ==
+psql -h localhost -p 5432 -U postgres -d postgres
+
+psql -h localhost -p 5433 -U postgres -d postgres
+psql -h localhost -p 5434 -U postgres -d postgres
+psql -h localhost -p 5435 -U postgres -d postgres
+(패스워드: enterprise_secure_password 입력)
+
+복제 상태(Replication Status) 쿼리 실행:
+
+SQL
+SELECT client_addr, state, sync_state FROM pg_stat_replication;
+정상 결과: 스탠바이(Replica) 노드들이 streaming 상태로 접속해 있는 행(Row)들이 출력됩니다.
+
+== 고가용성 postgreSQL 사용법 ==
+postgresql://[사용자명]:[비밀번호]@192.168.0.130:5431,192.168.0.130:5432,192.168.0.130:5433/[데이터베이스명]?target_session_attrs=read-write
+postgresql://keycloak:keycloak_password@192.168.0.130:5433,192.168.0.130:5434,192.168.0.130:5435/keycloak?target_session_attrs=read-write
+postgresql://keycloak:keycloak_password@192.168.0.130:5433,192.168.0.130:5434,192.168.0.130:5435/keycloak?target_session_attrs=read-only
+
+== postgreSQL 계정 생성 ==
+CREATE ROLE keycloak WITH LOGIN PASSWORD 'keycloak_password';
+
+== 데이터베이스 생성 및 소유권 이전 ==
+CREATE DATABASE keycloak OWNER keycloak;
+
+== 스키마 생성 및 소유권 부여 ==
+-- 1. keycloak 스키마 생성
+CREATE SCHEMA keycloak AUTHORIZATION keycloak;
+
+-- 2. 해당 스키마에 대한 모든 권한을 keycloak 계정에 부여
+GRANT ALL PRIVILEGES ON SCHEMA keycloak TO keycloak;
+
+== DBA 수준의 전체 권한 부여 (해당 DB 내에서) ==
+-- 1. 해당 DB에 대한 모든 권한 부여
+GRANT ALL PRIVILEGES ON DATABASE keycloak TO keycloak;
+
+-- 2. (중요) 향후 새로 만들어지는 테이블들에 대해서도 자동으로 권한이 부여되도록 설정
+ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak GRANT ALL ON TABLES TO keycloak;
+ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak GRANT ALL ON SEQUENCES TO keycloak;
+ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak GRANT ALL ON FUNCTIONS TO keycloak;
+
+-- 3. 만약 완전한 인스턴스/DB 레벨의 슈퍼유저 급 권한이 필요하다면 (선택)
+ALTER ROLE keycloak CREATEDB;
+
+== postgreSQL의 데이터베이스(Database) 목록 확인 ==
+SELECT 
+    datname AS database_name,
+    pg_catalog.pg_get_userbyid(datdba) AS owner,
+    pg_encoding_to_char(encoding) AS encoding
+FROM pg_database
+WHERE datistemplate = false -- 템플릿 DB 제외
+ORDER BY datname;
+
+== 스키마(Schema) 목록 확인 ==
+SELECT 
+    schema_name,
+    schema_owner
+FROM information_schema.schemata
+WHERE schema_name NOT LIKE 'pg_%' 
+  AND schema_name != 'information_schema'
+ORDER BY schema_name;
+
+== 계정(Role) 목록 조회 SQL ==
+SELECT 
+    rolname AS role_name,
+    rolsuper AS is_superuser,
+    rolcreatedb AS can_create_db,
+    rolcreaterole AS can_create_role,
+    rolcanlogin AS can_login,
+    rolconnlimit AS connection_limit
+FROM pg_roles
+ORDER BY rolname;

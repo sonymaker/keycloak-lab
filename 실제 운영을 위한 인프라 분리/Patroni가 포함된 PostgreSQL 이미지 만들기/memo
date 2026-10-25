@@ -1,0 +1,3 @@
+podman build -t sonymaker/patroni-postgres:17.11-alpine3.23 .
+
+patroni.yml.template은 참고할 것. 이미지 생성시에는 필요없음.
