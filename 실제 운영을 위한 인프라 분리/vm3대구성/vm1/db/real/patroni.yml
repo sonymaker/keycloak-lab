@@ -1,0 +1,61 @@
+scope: enterprise-ha-cluster   # 클러스터 그룹 식별자
+namespace: /service           # etcd 상에 데이터가 저장될 최상위 디렉토리 경로
+name: pg-node-1               # 현재 노드의 고유 명칭
+
+etcd3:
+  hosts:                      # etcd 합의체 접속 주소 목록
+    - 192.168.0.131:2379
+    - 192.168.0.132:2379
+    - 192.168.0.133:2379
+
+restapi:
+  listen: 0.0.0.0:8008        # Patroni API 리스닝 바인드
+  connect_address: 192.168.0.131:8008  # API 클라이언트 연결용 호스트 주소 및 포트
+
+bootstrap:
+  dcs:
+    ttl: 30                   # 리더 락(Lock) 만료 시간 (초 단위)
+    loop_wait: 10             # 노드 상태 체크 및 동기화 주기 (초 단위)
+    retry_timeout: 10         # etcd 통신 실패 시 재시도 대기 시간
+    maximum_lag_on_failover: 1048576 # 페일오버 시 허용되는 최대 WAL 지연 바이트
+    synchronous_mode: false   # 비동기 복제 모드 사용 여부
+    postgresql:
+      use_pg_rewind: true     # 장애 복구 후 노드 재참여 시 pg_rewind 자동 활용 허용
+      use_slots: true         # 리플리케이션 슬롯 자동 관리 활성화
+      parameters:
+        max_connections: 100         # 최대 동시 접속 허용 커넥션 수
+        max_wal_senders: 10          # 동시에 연결 가능한 WAL 전송 프로세스 수
+        max_replication_slots: 10    # 리플리케이션 슬롯 최대 개수
+        wal_level: replica           # 스트리밍 복제를 위한 WAL 레벨 설정
+        wal_log_hints: on            # pg_rewind 동작에 필요한 WAL 로그 힌트 활성화
+
+  initdb:
+    - encoding: UTF8          # 데이터베이스 기본 인코딩
+    - data-checksums          # 데이터 페이지 무손실 검증을 위한 체크섬 활성화
+
+  pg_hba:
+    - host replication replicator 127.0.0.1/32 md5    # 복제 전용 계정 접근 허용 서브넷
+    - host replication replicator 192.168.0.0/16 md5  # 물리 호스트 대역 허용
+    - host replication replicator 10.0.0.0/8 md5      # Podman 내부 컨테이너 브리지 통신 대역 전체 허용 (필수)
+    - host all all 0.0.0.0/0 md5                      # 외부 모든 IP에서의 일반 접속 허용 (비밀번호 인증)
+
+  users:
+    admin:
+      password: enterprise_secure_password
+      options:
+        - superuser
+        - createdb
+
+postgresql:
+  listen: 0.0.0.0:5432        # PostgreSQL 내부 바인드 포트
+  connect_address: 192.168.0.131:5432  # 타 노드가 복제 소스로 연결할 때 사용하는 호스트 측 노출 포트
+  data_dir: /var/lib/postgresql/data # 실제 데이터가 저장되는 경로
+  bin_dir: /usr/local/bin     # PostgreSQL 바이너리 경로
+  pgpass: /tmp/pgpass         # 내부 인증용 임시 패스워드 파일 경로
+  authentication:
+    replication:
+      username: replicator
+      password: enterprise_secure_password
+    superuser:
+      username: postgres
+      password: enterprise_secure_password
