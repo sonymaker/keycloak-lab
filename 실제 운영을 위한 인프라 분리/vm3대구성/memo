@@ -37,11 +37,42 @@ podman run --rm -it -v <볼륨이름>:/mnt -v $(pwd):/backup docker.io/library/a
 
 
 ==  Patroni 환경에서 HA 구성 장애 복구 방법(죽었던 1대를 복구하는 법: 1대가 완전히 아작났다고 가정했을때) ==
-3대 중 1대가 죽었을때는 정상 복구 가능: 죽었던 1대를 다시 기동하면 알아서 데이터 복구가 됨
+3대 중 1대가 죽었을때는 정상 복구 가능: 죽었던 1대를 다시 기동하면 알아서 데이터 복구가 됨. 대신 2대는 기동중이여야 하고 HA
 3대 중 2대가 죽으면 클러스터 복구 불가: 이때는 데이터만 백업해뒀다가 새로 띄워서 복구해야 할 듯
 
-# 1. Mac 호스트에 etcdctl 설치
+# 1. etcdctl 설치
+# macOS
 brew install etcd
+
+#rocky linux, RHEL
+# 기존 잘못 설치된 파일 삭제
+sudo rm -f /usr/local/bin/etcdctl
+
+#etcd 바이너리 다운로드 및 압축 해제
+ETCD_VER=v3.7.3
+
+#amd64일때
+wget https://github.com/etcd-io/etcd/releases/download/${ETCD_VER}/etcd-${ETCD_VER}-linux-amd64.tar.gz
+tar -xzvf etcd-${ETCD_VER}-linux-amd64.tar.gz
+
+#arm64일때
+wget https://github.com/etcd-io/etcd/releases/download/${ETCD_VER}/etcd-${ETCD_VER}-linux-arm64.tar.gz
+tar -xzvf etcd-${ETCD_VER}-linux-arm64.tar.gz
+
+#etcdctl 바이너리를 시스템 경로(/usr/local/bin)로 복사
+#amd64일때
+sudo cp etcd-${ETCD_VER}-linux-amd64/etcdctl /usr/local/bin/
+#arm64일때
+sudo cp etcd-${ETCD_VER}-linux-arm64/etcdctl /usr/local/bin/
+
+sudo chmod +x /usr/local/bin/etcdctl
+
+#설치 확인 및 API 버전 설정
+etcdctl version
+
+#만약 v3 버전 명령어를 기본으로 사용하려면 환경 변수를 설정해 줍니다.
+echo 'export ETCDCTL_API=3' >> ~/.bashrc
+source ~/.bashrc
 
 # 2. 클러스터 멤버 확인
 ETCDCTL_API=3 etcdctl --endpoints=http://127.0.0.1:2379 member list
@@ -50,14 +81,14 @@ ETCDCTL_API=3 etcdctl --endpoints=http://127.0.0.1:2379 member list
 ETCDCTL_API=3 etcdctl --endpoints=http://127.0.0.1:2379 member remove <MEMBER_ID>
 
 # 4. 살아있는 etcd 엔드포인트에 접속하여 복구할 노드의 Peer URL(통신용)을 추가
-ETCDCTL_API=3 etcdctl --endpoints=http://127.0.0.1:2379 member add etcd-2 --peer-urls=http://192.168.0.130:2382
+ETCDCTL_API=3 etcdctl --endpoints=http://127.0.0.1:2379 member add etcd-2 --peer-urls=http://192.168.0.130:2380
 
 # 5. 복구할 노드의 환경변수 ETCD_INITIAL_CLUSTER_STATE 항목을 "existing"으로 설정
 podman-compose.yml파일에 정의한 ETCD_INITIAL_CLUSTER_STATE 항목을 "existing"으로 설정(: 3대 모두 다시 생성할 때만 "new"로 설정)
 
 # 6. 컨테이너 생성 및 기동. 복구 확인
-
-
+podman-compose up -d
+podman logs -f 컨네이너명
 
 == etcd 클러스터 상태 확인 ==
 podman exec -it etcd-node-1 etcdctl member list --write-out=table

@@ -60,7 +60,8 @@ services:
       - "5432:5432"  # PostgreSQL DB 서비스 호스트 포트
       - "8008:8008"  # Patroni REST API 호스트 포트
     volumes:
-      - pg_data_node1:/var/lib/postgresql/data  # DB 데이터 영구 저장 볼륨
-      - ./patroni.yml:/etc/patroni/patroni.yml:z # 설정 파일 마운트 (SELinux 대응 :z 옵션 포함)
+      - ./data:/var/lib/postgresql/data:Z  # DB 데이터 영구 저장 볼륨
+      - ./logs:/var/log/postgresql:Z  # 컨테이너 내부 로그 경로
+      - ./patroni.yml:/etc/patroni/patroni.yml:Z # 설정 파일 마운트 (SELinux 대응 :Z 옵션 포함)
     depends_on:
       - etcd
