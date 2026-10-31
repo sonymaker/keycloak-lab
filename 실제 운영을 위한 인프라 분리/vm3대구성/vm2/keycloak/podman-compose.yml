@@ -11,7 +11,7 @@ services:
     container_name: keycloak-2
     environment:
       KC_DB: postgres
-      #KC_DB_URL: jdbc:postgresql://192.168.0.130:5431,192.168.0.130:5432,192.168.0.130:5433/keycloak?targetServerType=master&loadBalanceHosts=true
+      #KC_DB_URL: jdbc:postgresql://192.168.0.130:5431,192.168.0.130:5432,192.168.0.130:5433/keycloak?targetServerType=primary&loadBalanceHosts=true
       KC_DB_URL: jdbc:postgresql://192.168.0.130:5432/keycloak
       KC_DB_USERNAME: keycloak
       KC_DB_PASSWORD: keycloak_password
